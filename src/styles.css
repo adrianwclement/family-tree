@@ -100,10 +100,12 @@
     height: var(--print-tree-height, auto) !important;
     transform: scale(var(--print-scale, 1)) !important;
     transform-origin: top center !important;
+    overflow: visible !important;
   }
 
-  [data-print-tree="true"] {
-    overflow: visible !important;
+  [data-connection-layer="true"] {
+    height: var(--print-tree-height, auto) !important;
+    width: var(--print-tree-width, auto) !important;
   }
 
   [data-photo-frame="true"] {

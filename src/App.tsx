@@ -1,4 +1,5 @@
 import { ChangeEvent, PointerEvent, WheelEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { createPerson, demoTree, listSavedTrees, loadSavedTree, loadTree, saveTree, saveTreeSnapshot } from './data';
 import type { SavedTreeRecord } from './data';
 import { formatDateForDisplay, getGenerationRows, getLifeDates, getParentIds, initials } from './tree';
@@ -119,38 +120,32 @@ function App() {
     });
   };
 
-  useLayoutEffect(() => {
-    const draw = () => {
-      const treeElement = treeRef.current;
-      if (!treeElement) return;
+  const drawConnections = (sync = false) => {
+    const treeElement = treeRef.current;
+    if (!treeElement) return;
 
-      const treeSize = { width: treeElement.scrollWidth, height: treeElement.scrollHeight };
-      const nextConnections: Connection[] = [];
+    const nextTreeSize = { width: treeElement.offsetWidth || treeElement.scrollWidth, height: treeElement.offsetHeight || treeElement.scrollHeight };
+    const nextConnections = buildConnections(treeState, treeElement);
 
-      Object.values(treeState.people).forEach((parent) => {
-        parent.children.forEach((childId) => {
-          if (!treeState.people[childId]) return;
-          const path = getRootPath(treeElement, childId, parent.id);
-          if (path) nextConnections.push({ id: `root-${parent.id}-${childId}`, kind: 'root', d: path });
-        });
-      });
-
-      Object.values(treeState.people).forEach((person) => {
-        person.partners.forEach((partnerId) => {
-          if (person.id >= partnerId || !treeState.people[partnerId]) return;
-          const path = getPartnerPath(treeElement, person.id, partnerId);
-          if (path) nextConnections.push({ id: `partner-${person.id}-${partnerId}`, kind: 'partner', d: path });
-        });
-      });
-
-      setSvgSize(treeSize);
-      setTreeSize(treeSize);
+    const applyConnectionState = () => {
+      setSvgSize(nextTreeSize);
+      setTreeSize(nextTreeSize);
       setConnections(nextConnections);
     };
 
-    draw();
-    window.addEventListener('resize', draw);
-    return () => window.removeEventListener('resize', draw);
+    if (sync) {
+      flushSync(applyConnectionState);
+      return;
+    }
+
+    applyConnectionState();
+  };
+
+  useLayoutEffect(() => {
+    const handleResize = () => drawConnections();
+    drawConnections();
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
   }, [treeState, rows, zoom, isSimplified]);
 
 
@@ -403,9 +398,10 @@ function App() {
   };
 
   const exportPdf = () => {
+    drawConnections(true);
     const treeElement = treeRef.current;
-    const treeWidth = treeElement?.scrollWidth || 1;
-    const treeHeight = treeElement?.scrollHeight || 1;
+    const treeWidth = treeElement?.offsetWidth || treeElement?.scrollWidth || 1;
+    const treeHeight = treeElement?.offsetHeight || treeElement?.scrollHeight || 1;
     const printableWidthIn = DEFAULT_PRINT_PAGE_WIDTH_IN - PDF_PAGE_MARGIN_IN * 2;
     const printableHeightIn = DEFAULT_PRINT_PAGE_HEIGHT_IN - PDF_PAGE_MARGIN_IN * 2;
     const printableWidth = printableWidthIn * 96;
@@ -420,19 +416,29 @@ function App() {
     document.documentElement.style.setProperty('--print-scale', printScale.toFixed(4));
     document.documentElement.style.setProperty('--print-tree-width', Math.ceil(treeWidth) + 'px');
     document.documentElement.style.setProperty('--print-tree-height', Math.ceil(treeHeight) + 'px');
-    window.setTimeout(() => window.print(), 60);
+    window.setTimeout(() => {
+      drawConnections(true);
+      window.print();
+    }, 120);
   };
 
   useEffect(() => {
+    const preparePrint = () => drawConnections(true);
     const cleanup = () => {
       document.documentElement.style.removeProperty('--print-scale');
       document.documentElement.style.removeProperty('--print-tree-width');
       document.documentElement.style.removeProperty('--print-tree-height');
       document.getElementById('dynamic-print-page-size')?.remove();
+      window.requestAnimationFrame(() => drawConnections());
     };
+
+    window.addEventListener('beforeprint', preparePrint);
     window.addEventListener('afterprint', cleanup);
-    return () => window.removeEventListener('afterprint', cleanup);
-  }, []);
+    return () => {
+      window.removeEventListener('beforeprint', preparePrint);
+      window.removeEventListener('afterprint', cleanup);
+    };
+  }, [treeState, rows, zoom, isSimplified]);
 
 
   const beginPan = (event: PointerEvent<HTMLDivElement>) => {
@@ -586,7 +592,7 @@ function App() {
             className="absolute left-1/2 top-0 min-w-max origin-top px-6 pb-9 pt-2"
             style={{ transform: `translate(${pan.x}px, ${pan.y}px) translateX(-50%) scale(${zoom})` }}
           >
-              <ConnectionLayer connections={connections} size={svgSize} />
+              <ConnectionLayer connections={connections} size={svgSize} markerId="root-arrow" />
               <div className="relative z-10 grid gap-[74px]">
                 {rows.map((row, rowIndex) => (
                   <div key={rowIndex} className={`grid grid-cols-[92px_minmax(0,1fr)] items-stretch gap-4 ${isSimplified ? 'min-h-[132px]' : 'min-h-[250px]'}`}>
@@ -640,11 +646,20 @@ function App() {
   );
 }
 
-function ConnectionLayer({ connections, size }: { connections: Connection[]; size: { width: number; height: number } }) {
+function ConnectionLayer({ connections, size, markerId }: { connections: Connection[]; size: { width: number; height: number }; markerId: string }) {
   return (
-    <svg className="pointer-events-none absolute inset-0 z-0 overflow-visible" aria-hidden="true" viewBox={`0 0 ${size.width} ${size.height}`} width={size.width} height={size.height}>
+    <svg
+      data-connection-layer="true"
+      className="pointer-events-none absolute left-0 top-0 z-0 overflow-visible"
+      aria-hidden="true"
+      viewBox={`0 0 ${size.width} ${size.height}`}
+      width={size.width}
+      height={size.height}
+      preserveAspectRatio="none"
+      style={{ width: size.width, height: size.height }}
+    >
       <defs>
-        <marker id="root-arrow" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+        <marker id={markerId} viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
           <path d="M 1 1 L 9 5 L 1 9 z" className="fill-[#9fb3aa]" />
         </marker>
       </defs>
@@ -652,7 +667,7 @@ function ConnectionLayer({ connections, size }: { connections: Connection[]; siz
         <path
           key={connection.id}
           d={connection.d}
-          markerStart={connection.kind === 'root' ? 'url(#root-arrow)' : undefined}
+          markerStart={connection.kind === 'root' ? 'url(#' + markerId + ')' : undefined}
           className={connection.kind === 'root' ? 'fill-none stroke-[#9fb3aa] stroke-[2.5] [stroke-linecap:square] [stroke-linejoin:round]' : 'fill-none stroke-moss/85 stroke-[6] [stroke-linecap:round]'}
         />
       ))}
@@ -1253,6 +1268,28 @@ type LayoutRect = {
   height: number;
 };
 
+function buildConnections(treeState: FamilyTreeState, treeElement: HTMLElement) {
+  const nextConnections: Connection[] = [];
+
+  Object.values(treeState.people).forEach((parent) => {
+    parent.children.forEach((childId) => {
+      if (!treeState.people[childId]) return;
+      const path = getRootPath(treeElement, childId, parent.id);
+      if (path) nextConnections.push({ id: `root-${parent.id}-${childId}`, kind: 'root', d: path });
+    });
+  });
+
+  Object.values(treeState.people).forEach((person) => {
+    person.partners.forEach((partnerId) => {
+      if (person.id >= partnerId || !treeState.people[partnerId]) return;
+      const path = getPartnerPath(treeElement, person.id, partnerId);
+      if (path) nextConnections.push({ id: `partner-${person.id}-${partnerId}`, kind: 'partner', d: path });
+    });
+  });
+
+  return nextConnections;
+}
+
 function getRootPath(treeElement: HTMLElement, childId: string, parentId: string) {
   const childCard = treeElement.querySelector<HTMLElement>(`[data-person-id="${childId}"]`);
   const parentCard = treeElement.querySelector<HTMLElement>(`[data-person-id="${parentId}"]`);
@@ -1284,23 +1321,24 @@ function getPartnerPath(treeElement: HTMLElement, firstId: string, secondId: str
 }
 
 function getLayoutRect(element: HTMLElement, root: HTMLElement): LayoutRect {
-  let left = 0;
-  let top = 0;
-  let current: HTMLElement | null = element;
-
-  while (current && current !== root) {
-    left += current.offsetLeft;
-    top += current.offsetTop;
-    current = current.offsetParent as HTMLElement | null;
-  }
+  const rootRect = root.getBoundingClientRect();
+  const elementRect = element.getBoundingClientRect();
+  const scaleX = root.offsetWidth ? rootRect.width / root.offsetWidth : 1;
+  const scaleY = root.offsetHeight ? rootRect.height / root.offsetHeight : scaleX;
+  const safeScaleX = scaleX || 1;
+  const safeScaleY = scaleY || 1;
+  const left = (elementRect.left - rootRect.left) / safeScaleX;
+  const top = (elementRect.top - rootRect.top) / safeScaleY;
+  const width = elementRect.width / safeScaleX;
+  const height = elementRect.height / safeScaleY;
 
   return {
     top,
-    right: left + element.offsetWidth,
-    bottom: top + element.offsetHeight,
+    right: left + width,
+    bottom: top + height,
     left,
-    width: element.offsetWidth,
-    height: element.offsetHeight,
+    width,
+    height,
   };
 }
 
