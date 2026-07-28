@@ -1,0 +1,99 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: light;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    margin: 0;
+    min-height: 100vh;
+    overflow: hidden;
+  }
+
+  button,
+  input,
+  textarea {
+    font: inherit;
+  }
+}
+
+@layer components {
+  .field-input {
+    @apply w-full rounded-lg border border-bark/15 bg-white px-3 py-2.5 text-bark outline-none transition focus:ring-4 focus:ring-moss/20 disabled:bg-bark/5 disabled:text-bark/45;
+  }
+}
+
+@page {
+  size: letter landscape;
+  margin: 0;
+}
+
+@media print {
+  html,
+  body,
+  #root {
+    height: auto !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: hidden !important;
+  }
+
+  body {
+    background: white;
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+
+  main {
+    display: block !important;
+    width: var(--print-tree-width, auto) !important;
+    height: var(--print-tree-height, auto) !important;
+    overflow: hidden !important;
+  }
+
+  header,
+  aside,
+  [aria-label="Map controls"],
+  [aria-label="Selected individual editor"],
+  button:not([data-person-id]),
+  input,
+  select,
+  textarea {
+    display: none !important;
+  }
+
+  main > section {
+    display: block !important;
+    width: var(--print-tree-width, auto) !important;
+    height: var(--print-tree-height, auto) !important;
+    overflow: hidden !important;
+  }
+
+  [data-print-viewport="true"] {
+    display: block !important;
+    width: var(--print-tree-width, auto) !important;
+    height: var(--print-tree-height, auto) !important;
+    overflow: hidden !important;
+    background: white !important;
+  }
+
+  [data-print-tree="true"] {
+    position: static !important;
+    transform: scale(var(--print-scale, 1)) !important;
+    transform-origin: top left !important;
+  }
+
+  [data-print-tree="true"],
+  [data-print-tree="true"] * {
+    overflow: visible !important;
+  }
+}
