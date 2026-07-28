@@ -4,6 +4,10 @@ import type { SavedTreeRecord } from './data';
 import { formatDateForDisplay, getGenerationRows, getLifeDates, getParentIds, initials } from './tree';
 import type { Connection, FamilyTreeState, Person } from './types';
 
+const PDF_PAGE_MARGIN_IN = 0.18;
+const DEFAULT_PRINT_PAGE_WIDTH_IN = 11;
+const DEFAULT_PRINT_PAGE_HEIGHT_IN = 8.5;
+
 function App() {
   const [treeState, setTreeState] = useState<FamilyTreeState>(() => loadTree());
   const [zoom, setZoom] = useState(1);
@@ -89,7 +93,13 @@ function App() {
     }
   };
 
-  useEffect(() => saveTree(treeState), [treeState]);
+  useEffect(() => {
+    try {
+      saveTree(treeState);
+    } catch {
+      setDatabaseMessage('This tree is too large to auto-save. Try using smaller profile photos.');
+    }
+  }, [treeState]);
 
   const applyTreeChange = (updater: (current: FamilyTreeState) => FamilyTreeState) => {
     setTreeState((current) => {
@@ -396,14 +406,21 @@ function App() {
     const treeElement = treeRef.current;
     const treeWidth = treeElement?.scrollWidth || 1;
     const treeHeight = treeElement?.scrollHeight || 1;
-    const printableWidth = 11 * 96;
-    const printableHeight = 8.5 * 96;
+    const printableWidthIn = DEFAULT_PRINT_PAGE_WIDTH_IN - PDF_PAGE_MARGIN_IN * 2;
+    const printableHeightIn = DEFAULT_PRINT_PAGE_HEIGHT_IN - PDF_PAGE_MARGIN_IN * 2;
+    const printableWidth = printableWidthIn * 96;
+    const printableHeight = printableHeightIn * 96;
     const printScale = Math.min(printableWidth / treeWidth, printableHeight / treeHeight);
 
+    const printPageStyle = document.getElementById('dynamic-print-page-size') || document.createElement('style');
+    printPageStyle.id = 'dynamic-print-page-size';
+    printPageStyle.textContent = '@page { size: landscape; margin: ' + PDF_PAGE_MARGIN_IN + 'in; }';
+    if (!printPageStyle.parentElement) document.head.appendChild(printPageStyle);
+
     document.documentElement.style.setProperty('--print-scale', printScale.toFixed(4));
-    document.documentElement.style.setProperty('--print-tree-width', Math.ceil(treeWidth * printScale) + 'px');
-    document.documentElement.style.setProperty('--print-tree-height', Math.ceil(treeHeight * printScale) + 'px');
-    window.print();
+    document.documentElement.style.setProperty('--print-tree-width', Math.ceil(treeWidth) + 'px');
+    document.documentElement.style.setProperty('--print-tree-height', Math.ceil(treeHeight) + 'px');
+    window.setTimeout(() => window.print(), 60);
   };
 
   useEffect(() => {
@@ -411,6 +428,7 @@ function App() {
       document.documentElement.style.removeProperty('--print-scale');
       document.documentElement.style.removeProperty('--print-tree-width');
       document.documentElement.style.removeProperty('--print-tree-height');
+      document.getElementById('dynamic-print-page-size')?.remove();
     };
     window.addEventListener('afterprint', cleanup);
     return () => window.removeEventListener('afterprint', cleanup);
@@ -697,19 +715,8 @@ function Portrait({ person, size, placeholder = 'initials' }: { person: Person; 
 
   if (person.photo) {
     return (
-      <span className={`relative grid shrink-0 place-items-center overflow-hidden rounded-lg bg-leaf font-black text-moss ${sizeClass}`}>
-        <img
-          src={person.photo}
-          alt=""
-          className="absolute object-cover"
-          style={{
-            left: 50 + crop.x + '%',
-            top: 50 + crop.y + '%',
-            width: crop.zoom * 100 + '%',
-            height: crop.zoom * 100 + '%',
-            transform: 'translate(-50%, -50%)',
-          }}
-        />
+      <span data-photo-frame="true" className={`relative grid shrink-0 place-items-center overflow-hidden rounded-lg bg-leaf font-black text-moss ${sizeClass}`}>
+        <CroppedPhoto src={person.photo} crop={crop} />
       </span>
     );
   }
@@ -725,6 +732,34 @@ function Portrait({ person, size, placeholder = 'initials' }: { person: Person; 
   }
 
   return <span className={`grid shrink-0 place-items-center overflow-hidden rounded-lg bg-leaf font-black text-moss ${sizeClass}`}>{initials(person.name)}</span>;
+}
+
+function CroppedPhoto({ src, crop, draggable }: { src: string; crop: ReturnType<typeof getPhotoCrop>; draggable?: boolean }) {
+  const [aspectRatio, setAspectRatio] = useState(1);
+  const fitStyle = aspectRatio >= 1
+    ? { width: '100%', height: 100 / aspectRatio + '%' }
+    : { width: aspectRatio * 100 + '%', height: '100%' };
+
+  return (
+    <span
+      className="absolute left-1/2 top-1/2 grid place-items-center"
+      style={{
+        ...fitStyle,
+        transform: 'translate(-50%, -50%) translate(' + crop.x + '%, ' + crop.y + '%) scale(' + crop.zoom + ')',
+      }}
+    >
+      <img
+        src={src}
+        alt=""
+        className="h-full w-full select-none object-contain"
+        draggable={draggable}
+        onLoad={(event) => {
+          const image = event.currentTarget;
+          if (image.naturalWidth && image.naturalHeight) setAspectRatio(image.naturalWidth / image.naturalHeight);
+        }}
+      />
+    </span>
+  );
 }
 
 function EditorPanel({
@@ -762,15 +797,27 @@ function EditorPanel({
   onRemoveChild: (childId: string) => void;
   onClose: () => void;
 }) {
-  const updatePhoto = (event: ChangeEvent<HTMLInputElement>) => {
+  const [photoMessage, setPhotoMessage] = useState('');
+
+  const updatePhoto = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
+    event.target.value = '';
     if (!file) return;
-    const reader = new FileReader();
-    reader.addEventListener('load', () => {
-      onChange('photo', String(reader.result || ''));
-      onChange('photoCrop', person.photoCrop || DEFAULT_PHOTO_CROP);
-    });
-    reader.readAsDataURL(file);
+
+    if (!file.type.startsWith('image/')) {
+      setPhotoMessage('Please choose a standard image file.');
+      return;
+    }
+
+    setPhotoMessage('Preparing photo...');
+    try {
+      const photo = await prepareProfilePhoto(file);
+      onChange('photo', photo);
+      onChange('photoCrop', DEFAULT_PHOTO_CROP);
+      setPhotoMessage('Photo added.');
+    } catch {
+      setPhotoMessage('This photo could not be loaded. Try exporting it as JPG or PNG first.');
+    }
   };
 
   const updatePhotoCrop = (crop: Person['photoCrop']) => {
@@ -850,7 +897,8 @@ function EditorPanel({
       </Field>
 
       <Field label="Picture">
-        <input className="field-input" type="file" accept="image/*" onChange={updatePhoto} />
+        <input className="field-input" type="file" accept="image/jpeg,image/png,image/webp,image/gif" onChange={updatePhoto} />
+        {photoMessage ? <span className="text-xs font-bold text-bark/55">{photoMessage}</span> : null}
       </Field>
 
       {person.photo ? <PhotoCropEditor person={person} onChange={updatePhotoCrop} /> : null}
@@ -961,28 +1009,84 @@ function RelationshipEditor({
 }
 
 const DEFAULT_PHOTO_CROP = { x: 0, y: 0, zoom: 1, mode: 'offset' as const };
+const MAX_PHOTO_CROP_ZOOM = 5;
+const PROFILE_PHOTO_MAX_SIZE = 1400;
+const PROFILE_PHOTO_QUALITY = 0.84;
+
+function readFileAsDataUrl(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener('load', () => resolve(String(reader.result || '')));
+    reader.addEventListener('error', () => reject(reader.error));
+    reader.readAsDataURL(file);
+  });
+}
+
+function loadImage(dataUrl: string) {
+  return new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new Image();
+    image.addEventListener('load', () => resolve(image));
+    image.addEventListener('error', () => reject(new Error('Could not decode image')));
+    image.src = dataUrl;
+  });
+}
+
+async function prepareProfilePhoto(file: File) {
+  const dataUrl = await readFileAsDataUrl(file);
+  const image = await loadImage(dataUrl);
+  const largestSide = Math.max(image.naturalWidth, image.naturalHeight);
+
+  if (!largestSide) throw new Error('Invalid image dimensions');
+  if (largestSide <= PROFILE_PHOTO_MAX_SIZE && dataUrl.length < 750_000) return dataUrl;
+
+  const scale = Math.min(1, PROFILE_PHOTO_MAX_SIZE / largestSide);
+  const width = Math.max(1, Math.round(image.naturalWidth * scale));
+  const height = Math.max(1, Math.round(image.naturalHeight * scale));
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+
+  const context = canvas.getContext('2d');
+  if (!context) throw new Error('Canvas is unavailable');
+
+  context.fillStyle = '#f8f7f2';
+  context.fillRect(0, 0, width, height);
+  context.drawImage(image, 0, 0, width, height);
+  return canvas.toDataURL('image/jpeg', PROFILE_PHOTO_QUALITY);
+}
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
+}
+
+function getCropPanLimit(zoom: number) {
+  return (Math.max(zoom, 1) - 1) * 50;
+}
+
+function clampCropAxis(value: number, zoom: number) {
+  const limit = getCropPanLimit(zoom);
+  return clamp(value, -limit, limit);
 }
 
 function getPhotoCrop(person: Person) {
   const crop = person.photoCrop;
   if (!crop) return DEFAULT_PHOTO_CROP;
 
+  const zoom = clamp(crop.zoom || 1, 1, MAX_PHOTO_CROP_ZOOM);
+
   if (crop.mode === 'offset') {
     return {
-      x: clamp(crop.x || 0, -50, 50),
-      y: clamp(crop.y || 0, -50, 50),
-      zoom: clamp(crop.zoom || 1, 1, 3),
+      x: clampCropAxis(crop.x || 0, zoom),
+      y: clampCropAxis(crop.y || 0, zoom),
+      zoom,
       mode: 'offset' as const,
     };
   }
 
   return {
-    x: clamp((crop.x ?? 50) - 50, -50, 50),
-    y: clamp((crop.y ?? 50) - 50, -50, 50),
-    zoom: clamp(crop.zoom || 1, 1, 3),
+    x: clampCropAxis((crop.x ?? 50) - 50, zoom),
+    y: clampCropAxis((crop.y ?? 50) - 50, zoom),
+    zoom,
     mode: 'offset' as const,
   };
 }
@@ -993,11 +1097,25 @@ function PhotoCropEditor({ person, onChange }: { person: Person; onChange: (crop
   const crop = getPhotoCrop(person);
 
   const commitCrop = (nextCrop: Partial<typeof DEFAULT_PHOTO_CROP>) => {
+    const nextZoom = clamp(nextCrop.zoom ?? crop.zoom, 1, MAX_PHOTO_CROP_ZOOM);
     onChange({
-      x: clamp(nextCrop.x ?? crop.x, -50, 50),
-      y: clamp(nextCrop.y ?? crop.y, -50, 50),
-      zoom: clamp(nextCrop.zoom ?? crop.zoom, 1, 3),
+      x: clampCropAxis(nextCrop.x ?? crop.x, nextZoom),
+      y: clampCropAxis(nextCrop.y ?? crop.y, nextZoom),
+      zoom: nextZoom,
       mode: 'offset',
+    });
+  };
+
+  const updateZoom = (nextZoom: number) => {
+    const clampedZoom = clamp(nextZoom, 1, MAX_PHOTO_CROP_ZOOM);
+    const previousLimit = getCropPanLimit(crop.zoom);
+    const nextLimit = getCropPanLimit(clampedZoom);
+    const scale = previousLimit > 0 ? nextLimit / previousLimit : 1;
+
+    commitCrop({
+      x: previousLimit > 0 ? crop.x * scale : crop.x,
+      y: previousLimit > 0 ? crop.y * scale : crop.y,
+      zoom: clampedZoom,
     });
   };
 
@@ -1043,6 +1161,7 @@ function PhotoCropEditor({ person, onChange }: { person: Person; onChange: (crop
       </div>
       <div
         ref={frameRef}
+        data-photo-frame="true"
         className="relative mx-auto h-44 w-44 touch-none overflow-hidden rounded-2xl border border-moss/30 bg-white shadow-inner cursor-move"
         onPointerDown={beginDrag}
         onPointerMove={dragPhoto}
@@ -1050,19 +1169,7 @@ function PhotoCropEditor({ person, onChange }: { person: Person; onChange: (crop
         onPointerCancel={endDrag}
         aria-label="Drag to crop profile photo"
       >
-        <img
-          src={person.photo}
-          alt=""
-          className="absolute object-cover select-none"
-          draggable={false}
-          style={{
-            left: 50 + crop.x + '%',
-            top: 50 + crop.y + '%',
-            width: crop.zoom * 100 + '%',
-            height: crop.zoom * 100 + '%',
-            transform: 'translate(-50%, -50%)',
-          }}
-        />
+        <CroppedPhoto src={person.photo} crop={crop} draggable={false} />
         <div className="pointer-events-none absolute inset-0 rounded-2xl ring-1 ring-inset ring-white/70" />
       </div>
       <label className="grid gap-1.5 text-xs font-black uppercase text-bark/60">
@@ -1074,10 +1181,10 @@ function PhotoCropEditor({ person, onChange }: { person: Person; onChange: (crop
           className="accent-moss"
           type="range"
           min={1}
-          max={3}
+          max={MAX_PHOTO_CROP_ZOOM}
           step={0.05}
           value={crop.zoom}
-          onChange={(event) => commitCrop({ zoom: Number(event.target.value) })}
+          onChange={(event) => updateZoom(Number(event.target.value))}
         />
       </label>
       <button type="button" onClick={() => onChange(DEFAULT_PHOTO_CROP)} className="min-h-[34px] rounded-lg border border-bark/15 bg-white px-3 text-sm font-bold text-bark transition hover:-translate-y-0.5">

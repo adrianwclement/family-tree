@@ -34,7 +34,7 @@
 
 @page {
   size: letter landscape;
-  margin: 0;
+  margin: 0.18in;
 }
 
 @media print {
@@ -54,9 +54,11 @@
   }
 
   main {
-    display: block !important;
-    width: var(--print-tree-width, auto) !important;
-    height: var(--print-tree-height, auto) !important;
+    display: flex !important;
+    align-items: flex-start !important;
+    justify-content: center !important;
+    width: 100vw !important;
+    height: 100vh !important;
     overflow: hidden !important;
   }
 
@@ -72,28 +74,39 @@
   }
 
   main > section {
-    display: block !important;
-    width: var(--print-tree-width, auto) !important;
-    height: var(--print-tree-height, auto) !important;
+    display: flex !important;
+    align-items: flex-start !important;
+    justify-content: center !important;
+    width: 100vw !important;
+    height: 100vh !important;
     overflow: hidden !important;
   }
 
   [data-print-viewport="true"] {
-    display: block !important;
-    width: var(--print-tree-width, auto) !important;
-    height: var(--print-tree-height, auto) !important;
+    display: flex !important;
+    align-items: flex-start !important;
+    justify-content: center !important;
+    width: 100vw !important;
+    height: 100vh !important;
     overflow: hidden !important;
     background: white !important;
   }
 
   [data-print-tree="true"] {
+    left: auto !important;
     position: static !important;
+    top: auto !important;
+    width: var(--print-tree-width, auto) !important;
+    height: var(--print-tree-height, auto) !important;
     transform: scale(var(--print-scale, 1)) !important;
-    transform-origin: top left !important;
+    transform-origin: top center !important;
   }
 
-  [data-print-tree="true"],
-  [data-print-tree="true"] * {
+  [data-print-tree="true"] {
     overflow: visible !important;
+  }
+
+  [data-photo-frame="true"] {
+    overflow: hidden !important;
   }
 }

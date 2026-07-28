@@ -181,10 +181,9 @@ export function createPerson(overrides: Partial<Person> = {}): Person {
 }
 
 export function loadTree(): FamilyTreeState {
-  const stored = localStorage.getItem(STORAGE_KEY);
-  if (!stored) return structuredClone(demoTree);
-
   try {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    if (!stored) return structuredClone(demoTree);
     return JSON.parse(stored) as FamilyTreeState;
   } catch {
     return structuredClone(demoTree);
